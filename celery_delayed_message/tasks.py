@@ -2,7 +2,6 @@ import json
 from datetime import timedelta, datetime
 from typing import Union, Tuple
 
-from celery import current_app
 from celery.app.task import Task
 from celery.result import AsyncResult
 from celery.utils.time import maybe_make_aware
@@ -13,12 +12,6 @@ from kombu.utils.uuid import uuid
 from .consts import REDIS_CACHE_KEY, AMQP_QUEUE_BASENAME
 from .redis_clients import current_client, set_connection_url
 
-BROKER_URL = current_app.conf.broker_url
-TRANSPORT = parse_url(BROKER_URL)["transport"]
-
-if TRANSPORT == "redis":
-    set_connection_url(BROKER_URL)
-
 
 class DelayTask(Task):
     abstract = True
@@ -28,16 +21,23 @@ class DelayTask(Task):
         return self._get_app()
 
     @property
+    def broker_url(self):
+        return self.app.conf.broker_url
+
+    @property
     def broker_transport(self) -> str:
-        return parse_url(self.app.conf.broker_url)["transport"]
+        return parse_url(self.broker_url)["transport"]
 
     @property
     def is_redis_broker(self):
-        return TRANSPORT == "redis"
+        is_redis = self.broker_transport == "redis"
+        if is_redis:
+            set_connection_url(self.broker_url)
+        return is_redis
 
     @property
     def is_amqp_broker(self):
-        return TRANSPORT == "amqp"
+        return self.broker_transport == "amqp"
 
     @cached_property
     def delay_conf(self):
