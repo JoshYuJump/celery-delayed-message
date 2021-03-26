@@ -20,15 +20,15 @@ def set_connection_url(connection_url: str) -> None:
     _connection_url = connection_url
 
 
-def get_current_redis_client() -> Redis:
+def _get_current_redis_client() -> Redis:
+    global _redis_clients
     client = _redis_clients.current_client
 
     if client is None:
         assert _connection_url is not None, "please set connection string first"
-        client = Redis.from_url(_connection_url)
-        _redis_clients.current_client = client
+        client = _redis_clients.current_client = Redis.from_url(_connection_url)
 
     return client
 
 
-current_client = Proxy(get_current_redis_client)
+current_client = Proxy(_get_current_redis_client)
