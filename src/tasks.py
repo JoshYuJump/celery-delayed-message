@@ -10,10 +10,13 @@ from kombu.utils.objects import cached_property
 from kombu.utils.url import parse_url
 from kombu.utils.uuid import uuid
 
+from .consts import REDIS_CACHE_KEY, AMQP_QUEUE_BASENAME
 from .redis_clients import current_client, set_connection_url
 
 BROKER_URL = current_app.conf.broker_url
-if parse_url(BROKER_URL)["transport"] == "redis":
+TRANSPORT = parse_url(BROKER_URL)["transport"]
+
+if TRANSPORT == "redis":
     set_connection_url(BROKER_URL)
 
 
@@ -30,27 +33,18 @@ class DelayTask(Task):
 
     @property
     def is_redis_broker(self):
-        return self.broker_transport == "redis"
+        return TRANSPORT == "redis"
 
     @property
     def is_amqp_broker(self):
-        return self.broker_transport == "amqp"
+        return TRANSPORT == "amqp"
 
     @cached_property
     def delay_conf(self):
         """
         {
-            "minimum": 60 * 60,
+            "minimum": timedelta(hours=1),
             "requeue_recent": timedelta(hours=1),
-            "amqp": {
-                "exchange": {
-                    "name": "wow", 
-                    "type": "wow"
-                }
-            },
-            "redis": {
-                "cache_key": "CELERY_DELAYED_MESSAGE",
-            },
         }
         """
         return self.app.conf.DELAY
@@ -84,15 +78,11 @@ class DelayTask(Task):
         parameters.update(_options)
 
         countdown, eta = self.get_countdown_and_eta(options)
-        if countdown >= self.delay_conf["minimum"]:
+        if countdown >= self.delay_conf["minimum"].total_seconds():
             if self.is_amqp_broker:
-
-                # todo 暂不可用
-                exchange = self.delay_conf["amqp"]["exchange"]
+                queue_name = AMQP_QUEUE_BASENAME + ":" + task_id
                 self.app.amqp.queues.add(
-                    task_id,
-                    exchange=exchange["name"],
-                    exchange_type=exchange["type"],
+                    queue_name,
                     routing_key=options["routing_key"],
                     queue_arguments={
                         "x-message-ttl": countdown * 1000,
@@ -100,11 +90,11 @@ class DelayTask(Task):
                         "x-expires": (countdown + 1) * 1000,
                     },
                 )
-                options.update({"queue": task_id, "exchange": exchange})
+                options.update({"queue": queue_name})
             elif self.is_redis_broker:
                 parameters.update(original_task_name=self.name)
                 current_client.zadd(
-                    self.delay_conf["redis"]["cache_key"],
+                    REDIS_CACHE_KEY,
                     {json.dumps(parameters): int(eta.timestamp())},
                 )
                 return AsyncResult(task_id, task_name=self.name, app=self.app)
