@@ -128,11 +128,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# All the settings files in the .idea directory should be put under version control except workspace.xml,
-# which stores your local preferences. The workspace.xml file should be marked as ignored by VCS.
-# ref: https://www.jetbrains.com/help/pycharm/creating-and-managing-projects.html
-.idea/workspace.xml
-
-# misc.xml contains local environment specific information, for example project interpreter name
-.idea/misc.xml
-.idea/dataSources.xml
+# Pycharm settings
+.idea
