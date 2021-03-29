@@ -1,21 +1,26 @@
 # celery-delayed-message
+
 Real celery delayed message 
 
 # Usage
-## install
-```shell
-pip install celery_delayed_message
-```
-## patch your task
-```python
-from celery_delayed_message import patch_celery_task
 
-patch_celery_task()
+## install
+
+```shell
+pip install celery-delayed-message
 ```
-## if your broker is redis, add schedule into your beat_schedule
+
+## patch your task
+
+```python
+from celery_delayed_message import monkey
+monkey.path()
 ```
-{
-    'task': 'celery_delayed_message.redis_handlers.manager',
-    'schedule': timedelta(hours=1),
-}
-```
+
+# Settings
+
+## `delay`
+
+Countdown/ETA tasks delayed seconds greater then `delay` settings, will be processed by celery-delayed-message.
+
+Default value: 3600 (seconds)

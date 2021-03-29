@@ -11,6 +11,7 @@ from kombu.utils.uuid import uuid
 
 from .consts import REDIS_CACHE_KEY, AMQP_QUEUE_BASENAME
 from .redis_clients import current_client, set_connection_url
+from .redis_handlers import manager as requeue_manager
 
 
 class DelayTask(Task):
@@ -40,14 +41,20 @@ class DelayTask(Task):
         return self.broker_transport == "amqp"
 
     @cached_property
-    def delay_conf(self):
+    def eta_delay_in_seconds(self):
+        """Retrieve `app.conf.DELAY` and cache it
+
+        use a long property name to reduce naming conflict
         """
-        {
-            "minimum": timedelta(hours=1),
-            "requeue_recent": timedelta(hours=1),
-        }
-        """
-        return self.app.conf.DELAY
+
+        # Trigger redis delayed message re-queue manager
+        if not self._requeue_manager_delayed:
+            self._requeue_manager_delayed = True
+            requeue_manager.delay()
+
+        # default `DELAY` is 1 hour, minimum is 10 minutes
+        delay = getattr(self.app.conf, 'DELAY', 10)
+        return max(delay, 10)
 
     def get_countdown_and_eta(self, options) -> Tuple[Union[int, float], datetime]:
         now = self.app.now()
@@ -72,35 +79,51 @@ class DelayTask(Task):
         **options
     ):
         task_id = task_id or uuid()
-        parameters = locals()
-        del parameters["self"]
-        _options = parameters.pop("options")
-        parameters.update(_options)
 
-        countdown, eta = self.get_countdown_and_eta(options)
-        if countdown >= self.delay_conf["minimum"].total_seconds():
-            if self.is_amqp_broker:
-                queue_name = AMQP_QUEUE_BASENAME + ":" + task_id
-                self.app.amqp.queues.add(
-                    queue_name,
-                    routing_key=options["routing_key"],
-                    queue_arguments={
-                        "x-message-ttl": countdown * 1000,
-                        "x-dead-letter-exchange": options["queue"],
-                        "x-expires": (countdown + 1) * 1000,
-                    },
-                )
-                options.update({"queue": queue_name})
-            elif self.is_redis_broker:
-                parameters.update(original_task_name=self.name)
-                current_client.zadd(
-                    REDIS_CACHE_KEY,
-                    {json.dumps(parameters): int(eta.timestamp())},
-                )
-                return AsyncResult(task_id, task_name=self.name, app=self.app)
-            else:
-                pass
+        self._requeue_manager_delayed = getattr(self, '_requeue_manager_delayed', False)
+        # Ignored private variables and `self` object
+        self._parameters = {
+            k: v
+            for k, v in locals().items() if k != 'self' and not k.startswith('__')
+        }
+        self._parameters.update(self._parameters.pop("options"))
+
+        self._countdown, self._eta = self.get_countdown_and_eta(options)
+
+        if self._countdown >= self.eta_delay_in_seconds:
+            return self._delayed_process(
+                args, kwargs, task_id, producer, link, link_error, shadow, **options
+            )
 
         return super(DelayTask, self).apply_async(
             args, kwargs, task_id, producer, link, link_error, shadow, **options
         )
+
+    def _delayed_process(
+        self, args, kwargs, task_id, producer, link, link_error, shadow, **options
+    ):
+        if self.is_amqp_broker:
+            queue_name = AMQP_QUEUE_BASENAME + ":" + task_id
+            self.app.amqp.queues.add(
+                queue_name,
+                routing_key=options["routing_key"],
+                queue_arguments={
+                    "x-message-ttl": self._countdown * 1000,
+                    "x-dead-letter-exchange": options["queue"],
+                    "x-expires": (self._countdown + 1) * 1000,
+                },
+            )
+            options.update({"queue": queue_name})
+        elif self.is_redis_broker:
+            self._parameters.update(original_task_name=self.name)
+            print('_parameters', self._parameters)
+            current_client.zadd(
+                REDIS_CACHE_KEY,
+                {json.dumps(self._parameters): int(self._eta.timestamp())},
+            )
+            return AsyncResult(task_id, task_name=self.name, app=self.app)
+        else:
+            raise ValueError(
+                'Celery broker transport error, '
+                'only `RabbitMQ` and `Redis` are supported.'
+            )
