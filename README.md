@@ -12,10 +12,11 @@ from celery_delayed_message import patch_celery_task
 
 patch_celery_task()
 ```
-## if your broker is redis, add schedule into your beat_schedule
-```
-{
-    'task': 'celery_delayed_message.redis_handlers.manager',
-    'schedule': timedelta(hours=1),
+## settings
+```python
+from datetime import timedelta
+
+DELAY = {
+    "delay_time_at_least": timedelta(hours=2),  # default is 2 hours
 }
 ```
