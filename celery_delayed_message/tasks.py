@@ -1,55 +1,28 @@
-import json
-from datetime import timedelta, datetime
-from typing import Union, Tuple
+from datetime import timedelta
 
 from celery.app.task import Task
 from celery.result import AsyncResult
+from celery.utils import gen_unique_id
 from celery.utils.time import maybe_make_aware
 from kombu.utils.objects import cached_property
-from kombu.utils.url import parse_url
-from kombu.utils.uuid import uuid
 
-from .consts import REDIS_CACHE_KEY, AMQP_QUEUE_BASENAME
-from .redis_clients import current_client, set_connection_url
+from .consts import REDIS_CACHE_KEY, AMQP_QUEUE_BASENAME, CONF_DELAY_TIME_AT_LEAST
+from .redis_clients import current_client
+from .helpers import using_redis_transport, using_amqp_transport, get_delay_conf, dumps
 
 
 class DelayTask(Task):
     abstract = True
 
-    @property
+    @cached_property
     def app(self):
         return self._get_app()
 
-    @property
-    def broker_url(self):
-        return self.app.conf.broker_url
-
-    @property
-    def broker_transport(self) -> str:
-        return parse_url(self.broker_url)["transport"]
-
-    @property
-    def is_redis_broker(self):
-        is_redis = self.broker_transport == "redis"
-        if is_redis:
-            set_connection_url(self.broker_url)
-        return is_redis
-
-    @property
-    def is_amqp_broker(self):
-        return self.broker_transport == "amqp"
-
     @cached_property
     def delay_conf(self):
-        """
-        {
-            "minimum": timedelta(hours=1),
-            "requeue_recent": timedelta(hours=1),
-        }
-        """
-        return self.app.conf.DELAY
+        return get_delay_conf(self.app.conf)
 
-    def get_countdown_and_eta(self, options) -> Tuple[Union[int, float], datetime]:
+    def get_countdown_and_eta(self, options):
         now = self.app.now()
         countdown, eta = options.get("countdown"), options.get("eta")
         if countdown:
@@ -71,15 +44,15 @@ class DelayTask(Task):
         shadow=None,
         **options
     ):
-        task_id = task_id or uuid()
-        parameters = locals()
-        del parameters["self"]
-        _options = parameters.pop("options")
-        parameters.update(_options)
+        task_id = task_id or gen_unique_id()
+        param = {k: v for k, v in locals().items() if not k.startswith("__")}
+        del param["self"]
+        _options = param.pop("options")
+        param.update(_options)
 
         countdown, eta = self.get_countdown_and_eta(options)
-        if countdown >= self.delay_conf["minimum"].total_seconds():
-            if self.is_amqp_broker:
+        if countdown >= self.delay_conf[CONF_DELAY_TIME_AT_LEAST].total_seconds():
+            if using_amqp_transport(self.app):
                 queue_name = AMQP_QUEUE_BASENAME + ":" + task_id
                 self.app.amqp.queues.add(
                     queue_name,
@@ -91,12 +64,10 @@ class DelayTask(Task):
                     },
                 )
                 options.update({"queue": queue_name})
-            elif self.is_redis_broker:
-                parameters.update(original_task_name=self.name)
-                current_client.zadd(
-                    REDIS_CACHE_KEY,
-                    {json.dumps(parameters): int(eta.timestamp())},
-                )
+            elif using_redis_transport(self.app):
+                param.update(eta=eta.isoformat())
+                param.pop("countdown", None)
+                current_client.zadd(REDIS_CACHE_KEY, {dumps(self, param): int(eta.timestamp())})
                 return AsyncResult(task_id, task_name=self.name, app=self.app)
             else:
                 pass
