@@ -8,9 +8,8 @@ pip install celery_delayed_message
 ```
 ## patch your task in main.py and celeryconfig.py
 ```python
-from celery_delayed_message import patch_celery_task
-
-patch_celery_task()
+from celery_delayed_message import monkey
+monkey.patch()
 ```
 ## optional settings
 ```python
