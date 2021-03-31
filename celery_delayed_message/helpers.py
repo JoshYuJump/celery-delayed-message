@@ -1,5 +1,3 @@
-import base64
-import pickle
 import json
 from functools import partial
 
@@ -30,14 +28,14 @@ def get_delay_conf(conf):
 
 def dumps(task, param):
     return json.dumps({
-        "task": base64.b64encode(pickle.dumps(task)).decode(),
+        "task": task.name,
         "param": param,
     })
 
 
-def loads(content):
-    data = json.loads(content)
+def loads(app, task_json):
+    task_data = json.loads(task_json)
     return (
-        pickle.loads(base64.b64decode(data["task"].encode())),
-        data["param"],
+        app.tasks[task_data["task"]],
+        task_data["param"],
     )

@@ -12,13 +12,16 @@ logger = get_logger(__name__)
 
 @connect_on_app_finalize
 def add_redis_cache_manager_task(app):
+    if not using_redis_transport(app):
+        return
+
     logger.info("add redis cache manager task")
-    if using_redis_transport(app):
-        set_connection_url(app.conf.broker_url)
+    set_connection_url(app.conf.broker_url)
 
     @app.task(name=CACHE_MANAGER, shared=False, lazy=False, bind=True)
     def cache_manager(self):
-        set_connection_url(self.app.conf.broker_url)
+        app = self.app
+        set_connection_url(app.conf.broker_url)
         pop = current_client.register_script(
             """
             local stop = ARGV[1]
@@ -28,11 +31,11 @@ def add_redis_cache_manager_task(app):
             """
         )
 
-        end_timestamp = int((self.app.now() + REQUEUE_RECENT).timestamp())
+        end_timestamp = int((app.now() + REQUEUE_RECENT).timestamp())
         cached_tasks = pop([REDIS_CACHE_KEY], args=[end_timestamp])
         logger.info("received: %s tasks", len(cached_tasks))
         for task_json in cached_tasks:
-            task, param = loads(task_json)
+            task, param = loads(app, task_json)
             param.update(eta=datetime.fromisoformat(param["eta"]))
             task.apply_async(**param)
 
