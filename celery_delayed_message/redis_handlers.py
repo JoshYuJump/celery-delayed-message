@@ -33,7 +33,7 @@ def add_redis_cache_manager_task(app):
 
         end_timestamp = int((app.now() + REQUEUE_RECENT).timestamp())
         cached_tasks = pop([REDIS_CACHE_KEY], args=[end_timestamp])
-        logger.info("received: %s tasks", len(cached_tasks))
+        logger.info("%s find %s cached tasks", CACHE_MANAGER, len(cached_tasks))
         for task_json in cached_tasks:
             task, param = loads(app, task_json)
             param.update(eta=datetime.fromisoformat(param["eta"]))
