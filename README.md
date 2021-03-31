@@ -6,13 +6,13 @@ Real celery delayed message
 ```shell
 pip install celery_delayed_message
 ```
-## patch your task
+## patch your task in main.py and celeryconfig.py
 ```python
 from celery_delayed_message import patch_celery_task
 
 patch_celery_task()
 ```
-## settings
+## optional settings
 ```python
 from datetime import timedelta
 
@@ -20,3 +20,4 @@ DELAY = {
     "delay_time_at_least": timedelta(hours=2),  # default is 2 hours
 }
 ```
+## for Redis broker, pls enable your celery beat, cache manager will run every hour.
